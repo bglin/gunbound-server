@@ -2,6 +2,7 @@ from broker import BrokerServer, ServerOption
 from gameserver import FunctionRestrict, GameServer, User
 import threading
 import json
+from collections import deque
 
 
 def load_broker_directory_from_file():
@@ -21,6 +22,7 @@ if __name__ == "__main__":
     world_session = []
     world_room = []
     world_user = User.get_users()
+    world_queue = deque()
     broker_options = []
     bind_address = "0.0.0.0"
 
@@ -33,7 +35,7 @@ if __name__ == "__main__":
                                 FunctionRestrict.AVATAR_ENABLED]
 
     broker_server = BrokerServer(bind_address, 8372, broker_options, world_session)
-    game_server: GameServer = GameServer(bind_address, 8370, world_session, world_room, world_user)
+    game_server: GameServer = GameServer(bind_address, 8370, world_session, world_room, world_user,world_queue)
 
     game_server.gs_funcrestrict = FunctionRestrict.get_function_value(enabled_server_functions)
 
