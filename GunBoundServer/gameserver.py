@@ -739,9 +739,10 @@ class GameServer(object):
     world_room = []
     world_user = []
     world_match_queue = deque()
+    world_simple_queue = deque()
     command_processor: CommandProcessor = None
 
-    def __init__(self, host, port, in_world_session, in_world_room, in_world_user,in_world_queue):
+    def __init__(self, host, port, in_world_session, in_world_room, in_world_user,in_world_queue,in_world_simple_queue):
         self.host = host
         self.port = port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -752,6 +753,7 @@ class GameServer(object):
         self.world_room = in_world_room
         self.world_user = in_world_user
         self.world_match_queue = in_world_queue
+        self.world_simple_queue = in_world_simple_queue
         print("GS: TCP Bound")
 
         self.map_data = GameServer.get_map_data()
@@ -938,8 +940,8 @@ class GameServer(object):
                             print("RECV> SVC_CHANNEL_JOIN")
                             self.command_processor.join_channel(data, client_session, self.motd_channel)
                             self.command_processor.print_to_client(client_session, "Matchmacker 1.0 Initialized")
-                            self.command_processor.print_to_client(client_session, "Enter /find_match to find a player")
-                            self.command_processor.print_to_client(client_session, "...")
+                            self.command_processor.print_to_client(client_session, "/find_match pairs up two players in the channel ")
+                            self.command_processor.print_to_client(client_session, "/simple_find takes the player from the channel to a room")
 
 
                         elif client_command == 0x2100:
@@ -1149,6 +1151,12 @@ class GameServer(object):
                             room_join_reply.extend(int_to_bytes(created_room.room_id, 2))
                             room_join_reply.extend(self.motd_room.encode("ascii"))
                             client_session.send(0x2121, room_join_reply)
+
+                            self.command_processor.print_to_client(client_session, "Please wait while we find you a player...")
+                            self.world_simple_queue.append(client_session)
+
+
+
 
                         elif client_command == 0x3102:
                             print("RECV> SVC_ROOM_CHANGE_USEITEM")
@@ -1464,7 +1472,7 @@ class GameServer(object):
                                         if client_session.address==host_player_session.address:
                                             print("start of host logic")
                                             ## Room creation logic
-                                            created_room = Room(Room.find_room_position(self.world_room), "Death Match {}".format(random.randint(1000,9000)),"",0,bytes.fromhex("B2620C00"),2)
+                                            created_room: Room = Room(Room.find_room_position(self.world_room), "Death Match {}".format(random.randint(1000,9000)),"",0,bytes.fromhex("B2620C00"),2)
 
                                             client_session.room_slot = 0  # host room slot
                                             client_session.is_room_key = True  # indicates host
@@ -1496,14 +1504,14 @@ class GameServer(object):
                                             ## second player join logic
                                             ## player 2 joins correct JEWEl room but host shows room as SOLO
                                             print("start of join logic")
-                                            requested_room = Room.find_room_by_user(self.world_room, host_player_session.user.username)
-                                            print("id {0},{1}".format(requested_room.room_id,requested_room.player_sessions[0]))
-                                            print(bytes_to_hex(requested_room.game_settings))
-                                            client_session.room_team = Room.find_room_team(requested_room)
-                                            client_session.room_slot = Room.find_room_slot(requested_room)
+                                            host_room: Room = Room.find_room_by_user(self.world_room, host_player_session.user.username)
+                                            print("id {0},{1}".format(host_room.room_id,host_room.player_sessions[0]))
+                                            print(bytes_to_hex(host_room.game_settings))
+                                            client_session.room_team = Room.find_room_team(host_room)
+                                            client_session.room_slot = Room.find_room_slot(host_room)
                                             client_session.room_tank_primary = 0xFF
                                             client_session.room_tank_secondary = 0xFF
-                                            requested_room.player_sessions.append(client_session)
+                                            host_room.player_sessions.append(client_session)
 
                                             client_ip = ip_to_bytes(client_session.address[0])
                                             client_port = bytes.fromhex("20 AB")  # 8363 seems to be hardcoded
@@ -1519,18 +1527,18 @@ class GameServer(object):
                                             client_join_request = bytearray()
                                             client_join_request.extend(int_to_bytes(0, 2))  # probably RTC but not sure
                                             client_join_request.extend(int_to_bytes(0x0100, 2))  # unknown
-                                            client_join_request.extend(int_to_bytes(requested_room.room_id, 2))  # probably room id
-                                            client_join_request.append(len(requested_room.room_name))
-                                            client_join_request.extend(requested_room.room_name.encode("ascii"))
-                                            client_join_request.append(requested_room.map_id)
-                                            client_join_request.extend(requested_room.game_settings)
+                                            client_join_request.extend(int_to_bytes(host_room.room_id, 2))  # probably room id
+                                            client_join_request.append(len(host_room.room_name))
+                                            client_join_request.extend(host_room.room_name.encode("ascii"))
+                                            client_join_request.append(host_room.map_id)
+                                            client_join_request.extend(host_room.game_settings)
                                             client_join_request.extend(bytes.fromhex("FF FF FF FF FF FF FF FF"))  # 4x WORDs?
                                             # a bit unusual that occupants_max comes before number of players, normally swapped
                                             # unless everything else is wrong..
-                                            client_join_request.append(requested_room.occupants_max)
-                                            client_join_request.append(len(requested_room.player_sessions))
+                                            client_join_request.append(host_room.occupants_max)
+                                            client_join_request.append(len(host_room.player_sessions))
 
-                                            for session_item in requested_room.player_sessions:
+                                            for session_item in host_room.player_sessions:
                                                 print(session_item.address)
                                                 session_ip = ip_to_bytes(session_item.address[0])
                                                 client_join_request.append(session_item.room_slot)
@@ -1552,7 +1560,7 @@ class GameServer(object):
                                             client_session.send(0x2111, client_join_request)
 
                                             # notify room host of new join (3010)
-                                            for session_item in requested_room.player_sessions:
+                                            for session_item in host_room.player_sessions:
                                                 if session_item.is_room_key:
                                                     print("Sending join request to room host", session_item.user.username)
                                                     join_request = bytearray()
@@ -1592,6 +1600,111 @@ class GameServer(object):
                                         self.world_match_queue.popleft()
                                         self.command_processor.print_to_client(client_session, "No available players")
                                         break
+
+                            elif command_received == "simple_find":
+                                self.command_processor.print_to_client(client_session, "Please wait while we find you a room...")
+                                self.command_processor.print_to_client(client_session, "...")
+
+                                simple_time = time.process_time()
+                                while True:
+                                    if len(self.world_simple_queue) >= 1:
+                                        simple_host_session = self.world_simple_queue[0]
+                                        self.command_processor.print_to_client(client_session, "Room found. Joining in:")
+
+                                        for i in range(5,0,-1):
+                                            time.sleep(1)
+                                            self.command_processor.print_to_client(client_session, str(i))
+
+                                        simple_room: Room = Room.find_room_by_user(self.world_room, simple_host_session.user.username)
+                                        print("id {0},{1}".format(simple_room.room_id,simple_room.player_sessions[0]))
+                                        print(bytes_to_hex(simple_room.game_settings))
+                                        client_session.room_team = Room.find_room_team(simple_room)
+                                        client_session.room_slot = Room.find_room_slot(simple_room)
+                                        client_session.room_tank_primary = 0xFF
+                                        client_session.room_tank_secondary = 0xFF
+                                        simple_room.player_sessions.append(client_session)
+
+                                        client_ip = ip_to_bytes(client_session.address[0])
+                                        client_port = bytes.fromhex("20 AB")  # 8363 seems to be hardcoded
+                                        print(client_session.user.username)
+
+                                        # decent chunk copied from 0x2100
+                                        # 20AB = port 8363, client listens there for UDP
+
+                                        # respond to the client first
+                                        # the start of the client_join_request are room-specific details
+                                        # how does the client know who the host is?
+                                        client_session.send(0x21F5, bytes.fromhex("03"), rtc=0)  # unknown - why 3?
+                                        client_join_request = bytearray()
+                                        client_join_request.extend(int_to_bytes(0, 2))  # probably RTC but not sure
+                                        client_join_request.extend(int_to_bytes(0x0100, 2))  # unknown
+                                        client_join_request.extend(int_to_bytes(simple_room.room_id, 2))  # probably room id
+                                        client_join_request.append(len(simple_room.room_name))
+                                        client_join_request.extend(simple_room.room_name.encode("ascii"))
+                                        client_join_request.append(simple_room.map_id)
+                                        client_join_request.extend(simple_room.game_settings)
+                                        client_join_request.extend(bytes.fromhex("FF FF FF FF FF FF FF FF"))  # 4x WORDs?
+                                        # a bit unusual that occupants_max comes before number of players, normally swapped
+                                        # unless everything else is wrong..
+                                        client_join_request.append(simple_room.occupants_max)
+                                        client_join_request.append(len(simple_room.player_sessions))
+
+                                        for session_item in simple_room.player_sessions:
+                                            print(session_item.address)
+                                            session_ip = ip_to_bytes(session_item.address[0])
+                                            client_join_request.append(session_item.room_slot)
+                                            client_join_request.extend(resize_bytes(session_item.user.username.encode("ascii"), 0xC))
+                                            client_join_request.extend(session_ip)
+                                            client_join_request.extend(client_port)
+                                            client_join_request.extend(session_ip)
+                                            client_join_request.extend(client_port)
+                                            client_join_request.append(session_item.room_tank_primary)  # primary tank
+                                            client_join_request.append(session_item.room_tank_secondary)  # secondary tank
+                                            client_join_request.append(session_item.room_team)  # team side (0 = A, 1 = B)
+                                            client_join_request.append(0x01)  # unknown, stays at 1
+                                            client_join_request.extend(session_item.user.avatar_equipped)  # currently worn avatar
+                                            client_join_request.extend(resize_bytes(session_item.user.guild.encode("ascii"), 8))
+                                            client_join_request.extend(int_to_bytes(session_item.user.rank_current, 2))
+                                            client_join_request.extend(int_to_bytes(session_item.user.rank_season, 2))
+
+                                        client_join_request.extend(self.motd_room.encode("ascii"))
+                                        client_session.send(0x2111, client_join_request)
+
+
+                                        # notify room host of new join (3010)
+                                        for session_item in simple_room.player_sessions:
+                                            if session_item.is_room_key:
+                                                print("Sending join request to room host", session_item.user.username)
+                                                join_request = bytearray()
+                                                join_request.append(client_session.room_slot)
+                                                join_request.extend(resize_bytes(client_session.user.username.encode("ascii"), 0xC))
+                                                join_request.extend(client_ip)
+                                                join_request.extend(client_port)
+                                                join_request.extend(client_ip)
+                                                join_request.extend(client_port)
+                                                join_request.append(client_session.room_tank_primary)  # primary tank
+                                                join_request.append(client_session.room_tank_secondary)  # secondary tank
+                                                join_request.append(client_session.room_team)  # team side
+                                                join_request.extend(client_session.user.avatar_equipped)  # currently worn avatar
+                                                join_request.extend(resize_bytes(client_session.user.guild.encode("ascii"), 8))
+                                                join_request.extend(int_to_bytes(client_session.user.rank_current, 2))
+                                                join_request.extend(int_to_bytes(client_session.user.rank_season, 2))
+                                                session_item.send(0x3010, join_request)
+
+                                        ## need to see if server can send ready state to client
+                                        client_session.send(0x3231, bytes.fromhex(""), rtc=0)
+
+                                        self.world_simple_queue.popleft()
+                                        break
+                                    elif time.process_time() - simple_time > 30:
+                                        self.world_simple_queue.popleft()
+                                        self.command_processor.print_to_client(client_session, "No available room at this moment.")
+                                        break
+
+
+
+
+
 
 
 
