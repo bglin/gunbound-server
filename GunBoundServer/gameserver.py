@@ -1472,7 +1472,7 @@ class GameServer(object):
                                         if client_session.address==host_player_session.address:
                                             print("start of host logic")
                                             ## Room creation logic
-                                            created_room: Room = Room(Room.find_room_position(self.world_room), "Death Match {}".format(random.randint(1000,9000)),"",0,bytes.fromhex("B2620C00"),2)
+                                            created_room = Room(Room.find_room_position(self.world_room), "Death Match {}".format(random.randint(1000,9000)),"",0,bytes.fromhex("B2620C00"),2)
 
                                             client_session.room_slot = 0  # host room slot
                                             client_session.is_room_key = True  # indicates host
@@ -1602,6 +1602,7 @@ class GameServer(object):
                                         break
 
                             elif command_received == "simple_find":
+                                ## this command takes a player from the channel to a manually created room
                                 self.command_processor.print_to_client(client_session, "Please wait while we find you a room...")
                                 self.command_processor.print_to_client(client_session, "...")
 
@@ -1615,7 +1616,7 @@ class GameServer(object):
                                             time.sleep(1)
                                             self.command_processor.print_to_client(client_session, str(i))
 
-                                        simple_room: Room = Room.find_room_by_user(self.world_room, simple_host_session.user.username)
+                                        simple_room = Room.find_room_by_user(self.world_room, simple_host_session.user.username)
                                         print("id {0},{1}".format(simple_room.room_id,simple_room.player_sessions[0]))
                                         print(bytes_to_hex(simple_room.game_settings))
                                         client_session.room_team = Room.find_room_team(simple_room)
@@ -1691,22 +1692,21 @@ class GameServer(object):
                                                 join_request.extend(int_to_bytes(client_session.user.rank_season, 2))
                                                 session_item.send(0x3010, join_request)
 
-                                        ## need to see if server can send ready state to client
+                                        ## client gets updated with ready status
                                         client_session.send(0x3231, bytes.fromhex(""), rtc=0)
+
+                                        # start game logic
+                                        ## game gets stuck on loading screen
+                                        ## clients cant communicate with each other and enter tunnel
+                                        ## need to better understand the client state
+                                        ## need to figure out value of the variable data from client
+                                        # self.command_processor.start_game_serv2(data, Session.get_session(self.world_room,simple_host_session.user.username))
 
                                         self.world_simple_queue.popleft()
                                         break
                                     elif time.process_time() - simple_time > 30:
-                                        self.world_simple_queue.popleft()
                                         self.command_processor.print_to_client(client_session, "No available room at this moment.")
                                         break
-
-
-
-
-
-
-
 
                         else:
                             print("Unknown response to client command:", client_command)
